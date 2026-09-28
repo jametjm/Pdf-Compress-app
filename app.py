@@ -3,15 +3,20 @@ import os
 import shutil
 import tempfile
 import zipfile
-import fitz  # PyMuPDF
 from PIL import Image
+import fitz  # PyMuPDF
 import streamlit as st
 
 
 def compress_pdf_file(
-    pdf_bytes, filename, max_size=1280, quality=60, progress_bar=None
+    pdf_bytes,
+    filename,
+    max_size=1280,
+    quality=60,
+    password="1234",
+    progress_bar=None,
 ):
-    """ฟังก์ชันประมวลผลบีบอัด PDF รายไฟล์"""
+    """ฟังก์ชันประมวลผลบีบอัด PDF รายไฟล์ พร้อมตั้งรหัสผ่านล็อกไฟล์"""
     # สร้างโฟลเดอร์ชั่วคราวใน RAM/Temp System
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_split_pdf = os.path.join(temp_dir, "1_split")
@@ -100,9 +105,21 @@ def compress_pdf_file(
             else:
                 break
 
-        # บันทึกออกเป็น Bytes
+        # บันทึกออกเป็น Bytes พร้อมใส่ Password ล็อกไฟล์
         out_buffer = io.BytesIO()
-        merged_doc.save(out_buffer, garbage=4, deflate=True)
+        if password:
+            # ใช้การเข้ารหัส AES-256 (PDF_ENCRYPT_AES_256) และตั้งค่า user_pw / owner_pw
+            merged_doc.save(
+                out_buffer,
+                garbage=4,
+                deflate=True,
+                encryption=fitz.PDF_ENCRYPT_AES_256,
+                user_pw=password,
+                owner_pw=password,
+            )
+        else:
+            merged_doc.save(out_buffer, garbage=4, deflate=True)
+
         merged_doc.close()
         out_buffer.seek(0)
         return out_buffer.getvalue()
@@ -114,7 +131,7 @@ st.set_page_config(
 )
 
 st.title("📄 PDF Compressor Web App")
-st.write("เครื่องมือบีบอัดไฟล์ PDF ด้วยเทคนิค Convert Page-to-Image")
+st.write("เครื่องมือบีบอัดไฟล์ PDF พร้อมระบบใส่รหัสผ่านป้องกันไฟล์")
 
 # ส่วนแถบตั้งค่าข้างๆ (Sidebar Settings)
 st.sidebar.header("⚙️ การตั้งค่าบีบอัด")
@@ -122,6 +139,12 @@ max_size = st.sidebar.slider(
     "ขนาดกว้าง/ยาวสูงสุด (Pixels)", 600, 2400, 1280, step=100
 )
 quality = st.sidebar.slider("คุณภาพรูปภาพ JPEG (Quality %)", 10, 95, 60, step=5)
+
+# เพิ่มช่องสำหรับกรอก/ตั้งค่า Password
+st.sidebar.header("🔒 การตั้งค่ารหัสผ่าน")
+pdf_password = st.sidebar.text_input(
+    "รหัสผ่านล็อกไฟล์ PDF Output", value="1234", type="password"
+)
 
 # 1. ปุ่มเลือกไฟล์ (ให้ลากวางได้หลายไฟล์)
 uploaded_files = st.file_uploader(
@@ -143,9 +166,13 @@ if uploaded_files:
             # อ่านไฟล์เป็น Bytes
             pdf_bytes = file.read()
 
-            # สั่งประมวลผล
+            # สั่งประมวลผล (ส่งค่า password กำหนดไว้ลงไปด้วย)
             output_bytes = compress_pdf_file(
-                pdf_bytes, file.name, max_size, quality
+                pdf_bytes,
+                file.name,
+                max_size=max_size,
+                quality=quality,
+                password=pdf_password,
             )
 
             raw_name = os.path.splitext(file.name)[0]
@@ -156,7 +183,7 @@ if uploaded_files:
             # อัปเดต Progress Bar
             progress_bar.progress((idx + 1) / len(uploaded_files))
 
-        st.success("🎉 บีบอัดไฟล์เรียบร้อยแล้ว!")
+        st.success("🎉 บีบอัดและใส่รหัสผ่านเรียบร้อยแล้ว!")
 
         # ถ้ามีไฟล์เดียว ให้ปุ่มโหลด PDF ตรงๆ
         if len(processed_files) == 1:
