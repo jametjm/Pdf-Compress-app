@@ -8,6 +8,50 @@ import fitz  # PyMuPDF
 import streamlit as st
 
 
+# --- 1. ระบบยืนยันตัวตน (Authentication / Login) ---
+def check_password():
+    """ตรวจสอบรหัสผ่านสำหรับเข้าใช้งานระบบ"""
+
+    def password_entered():
+        if st.session_state["password_input"] == "1234":
+            st.session_state["password_correct"] = True
+            del st.session_state["password_input"]  # ลบข้อมูลรหัสออกจาก session เพื่อความปลอดภัย
+        else:
+            st.session_state["password_correct"] = False
+
+    # ถ้าเข้าใช้งานสำเร็จแล้ว
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # แสดงหน้าจอ Login
+    st.set_page_config(
+        page_title="เข้าสู่ระบบ - PDF Compressor",
+        page_icon="🔒",
+        layout="centered",
+    )
+
+    st.title("🔒 เข้าสู่ระบบใช้งานโปรแกรม")
+    st.write("กรุณากรอกรหัสผ่านเพื่อเข้าใช้งานโปรแกรมบีบอัด PDF")
+
+    st.text_input(
+        "รหัสผ่านเข้าใช้งาน (Password):",
+        type="password",
+        on_change=password_entered,
+        key="password_input",
+    )
+
+    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+        st.error("❌ รหัสผ่านไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง")
+
+    return False
+
+
+# ตรวจสอบรหัสผ่านก่อน ถ้ารหัสยังไม่ถูกต้อง จะหยุดการทำงานตรงนี้ทันที
+if not check_password():
+    st.stop()
+
+
+# --- 2. ฟังก์ชันประมวลผลบีบอัด PDF ---
 def compress_pdf_file(
     pdf_bytes,
     filename,
@@ -17,8 +61,7 @@ def compress_pdf_file(
     output_password="",
     progress_callback=None,
 ):
-    """ฟังก์ชันประมวลผลบีบอัด PDF รายไฟล์ พร้อมตั้งรหัสผ่านล็อกไฟล์ และรายงาน Progress รายหน้า"""
-    # สร้างโฟลเดอร์ชั่วคราวใน RAM/Temp System
+    """ฟังก์ชันประมวลผลบีบอัด PDF รายไฟล์"""
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_split_pdf = os.path.join(temp_dir, "1_split")
         temp_pics = os.path.join(temp_dir, "2_pics")
@@ -33,16 +76,12 @@ def compress_pdf_file(
         ]:
             os.makedirs(f, exist_ok=True)
 
-        # เปิดเอกสาร PDF
         src_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
-        # ตรวจสอบการถอดรหัส (ถ้าไฟล์ต้นฉบับติดรหัสผ่าน)
         if src_doc.is_encrypted:
             if input_password:
                 if not src_doc.authenticate(input_password):
-                    raise ValueError(
-                        f"รหัสผ่านสำหรับเปิดไฟล์ {filename} ไม่ถูกต้อง"
-                    )
+                    raise ValueError(f"รหัสผ่านสำหรับเปิดไฟล์ {filename} ไม่ถูกต้อง")
             else:
                 raise ValueError(
                     f"ไฟล์ {filename} ติดรหัสผ่าน กรุณากรอกรหัสผ่านต้นฉบับที่ Sidebar"
@@ -54,19 +93,16 @@ def compress_pdf_file(
         for page_num in range(total_pages):
             new_doc = fitz.open()
             new_doc.insert_pdf(src_doc, from_page=page_num, to_page=page_num)
-            new_doc.save(
-                os.path.join(temp_split_pdf, f"page_{page_num + 1}.pdf")
-            )
+            new_doc.save(os.path.join(temp_split_pdf, f"page_{page_num + 1}.pdf"))
             new_doc.close()
         src_doc.close()
 
-        # 2) Convert PDF เป็น Image, Resize, Compress และแปลงกลับเป็น PDF รายหน้า
+        # 2) Convert PDF -> Image -> Resize -> PDF รายหน้า
         pdf_files = sorted(os.listdir(temp_split_pdf))
         for idx, pdf_file in enumerate(pdf_files):
             if pdf_file.endswith(".pdf"):
                 page_idx = idx + 1
 
-                # 2.1) Render PDF -> Image
                 pdf_path = os.path.join(temp_split_pdf, pdf_file)
                 doc = fitz.open(pdf_path)
                 page = doc.load_page(0)
@@ -76,14 +112,11 @@ def compress_pdf_file(
                 pix.save(pic_path)
                 doc.close()
 
-                # 2.2) Resize & Compress Image
                 try:
                     with Image.open(pic_path) as img:
                         img.thumbnail((max_size, max_size))
                         img = img.convert("RGB")
-                        output_jpg_name = (
-                            os.path.splitext(pic_name)[0] + ".jpg"
-                        )
+                        output_jpg_name = os.path.splitext(pic_name)[0] + ".jpg"
                         output_jpg_path = os.path.join(
                             temp_resized_pics, output_jpg_name
                         )
@@ -96,20 +129,15 @@ def compress_pdf_file(
                 except Exception as e:
                     st.error(f"Error sizing {pic_name}: {e}")
 
-                # 2.3) Convert รูปภาพกลับเป็น PDF หน้าเดี่ยว
                 jpg_path = os.path.join(
-                    temp_resized_pics,
-                    os.path.splitext(pic_name)[0] + ".jpg",
+                    temp_resized_pics, os.path.splitext(pic_name)[0] + ".jpg"
                 )
                 final_pdf_name = os.path.splitext(pic_name)[0] + ".pdf"
-                final_pdf_path = os.path.join(
-                    temp_compressed_pages, final_pdf_name
-                )
+                final_pdf_path = os.path.join(temp_compressed_pages, final_pdf_name)
                 if os.path.exists(jpg_path):
                     with Image.open(jpg_path) as img:
                         img.save(final_pdf_path, "PDF")
 
-                # อัปเดต Progress Bar รายหน้า
                 if progress_callback:
                     progress_callback(page_idx, total_pages)
 
@@ -128,7 +156,6 @@ def compress_pdf_file(
             else:
                 break
 
-        # บันทึกออกเป็น Bytes พร้อมใส่ Password ล็อกไฟล์
         out_buffer = io.BytesIO()
         if output_password:
             merged_doc.save(
@@ -147,13 +174,16 @@ def compress_pdf_file(
         return out_buffer.getvalue()
 
 
-# --- หน้าตา UI ของ Streamlit ---
-st.set_page_config(
-    page_title="PDF Compressor Tool", page_icon="📄", layout="centered"
-)
-
+# --- 3. หน้าตา UI ของ Streamlit (จะทำงานเมื่อล็อกอินผ่านแล้วเท่านั้น) ---
 st.title("📄 PDF Compressor Web App")
 st.write("เครื่องมือบีบอัดไฟล์ PDF พร้อมระบบใส่รหัสผ่านป้องกันไฟล์")
+
+# ปุ่ม Logout ที่ Sidebar
+if st.sidebar.button("🚪 ออกจากระบบ"):
+    st.session_state["password_correct"] = False
+    st.rerun()
+
+st.sidebar.divider()
 
 # ส่วนแถบตั้งค่าข้างๆ (Sidebar Settings)
 st.sidebar.header("⚙️ การตั้งค่าบีบอัด")
@@ -162,14 +192,11 @@ max_size = st.sidebar.slider(
 )
 quality = st.sidebar.slider("คุณภาพรูปภาพ JPEG (Quality %)", 10, 95, 60, step=5)
 
-# การตั้งค่ารหัสผ่าน
-st.sidebar.header("🔒 การตั้งค่ารหัสผ่าน")
-
+st.sidebar.header("🔒 การตั้งค่ารหัสผ่านไฟล์ PDF")
 input_pdf_password = st.sidebar.text_input(
     "รหัสผ่านเปิดไฟล์ต้นฉบับ (ถ้ามี)", value="", type="password"
 )
 
-st.sidebar.subheader("ตั้งรหัสผ่านไฟล์ Output")
 password_option = st.sidebar.radio(
     "รูปแบบการตั้งรหัสผ่าน Output:",
     ("ใช้รหัสผ่านคงที่เดียวกันทั้งหมด", "ไม่ตั้งรหัสผ่าน (ปลดล็อก)"),
@@ -182,7 +209,7 @@ if password_option == "ใช้รหัสผ่านคงที่เดี
 else:
     pdf_password = ""
 
-# 1. ปุ่มเลือกไฟล์ (ให้ลากวางได้หลายไฟล์)
+# ปุ่มเลือกไฟล์
 uploaded_files = st.file_uploader(
     "เลือกไฟล์ PDF ที่ต้องการบีบอัด (เลือกได้หลายไฟล์)",
     type=["pdf"],
@@ -195,13 +222,11 @@ if uploaded_files:
     if st.button("🚀 เริ่มบีบอัดไฟล์ทั้งหมด", type="primary"):
         processed_files = []
 
-        # Progress Bar ภาพรวมจำนวนไฟล์
         st.write("---")
         st.write("📊 **ความคืบหน้ารวม:**")
         overall_progress = st.progress(0)
         overall_status = st.empty()
 
-        # Component แสดงความคืบหน้ารายหน้า
         page_status = st.empty()
         page_progress = st.progress(0)
 
@@ -210,10 +235,8 @@ if uploaded_files:
                 f"กำลังจัดการไฟล์ ({idx+1}/{len(uploaded_files)}): {file.name}"
             )
 
-            # อ่านไฟล์เป็น Bytes
             pdf_bytes = file.read()
 
-            # Callback สำหรับอัปเดตความคืบหน้ารายหน้า
             def update_page_progress(current_page, total_pages):
                 page_status.text(
                     f"📄 [{file.name}] กำลังประมวลผลหน้า {current_page}/{total_pages}"
@@ -221,7 +244,6 @@ if uploaded_files:
                 page_progress.progress(current_page / total_pages)
 
             try:
-                # สั่งประมวลผล
                 output_bytes = compress_pdf_file(
                     pdf_bytes,
                     file.name,
@@ -239,17 +261,14 @@ if uploaded_files:
             except Exception as e:
                 st.error(f"❌ เกิดข้อผิดพลาดกับไฟล์ {file.name}: {e}")
 
-            # อัปเดต Overall Progress Bar
             overall_progress.progress((idx + 1) / len(uploaded_files))
 
-        # เคลียร์สถานะรายหน้าเมื่อเสร็จสิ้น
         page_status.empty()
         page_progress.empty()
 
         if processed_files:
             st.success("🎉 บีบอัดและประมวลผลเรียบร้อยแล้ว!")
 
-            # ถ้ามีไฟล์เดียว ให้ปุ่มโหลด PDF ตรงๆ
             if len(processed_files) == 1:
                 file_name, file_bytes = processed_files[0]
                 st.download_button(
@@ -258,7 +277,6 @@ if uploaded_files:
                     file_name=file_name,
                     mime="application/pdf",
                 )
-            # ถ้ามีหลายไฟล์ ให้มัดเป็น Zip ให้ดาวน์โหลด
             else:
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(
