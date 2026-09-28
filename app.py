@@ -12,8 +12,8 @@ import streamlit as st
 def check_password():
     """ตรวจสอบรหัสผ่านก่อนเข้าใช้งานแอป"""
     def password_entered():
-        # ตั้งรหัสผ่านที่ต้องการตรงนี้ (ตัวอย่าง: admin1234)
-        if st.session_state["password"] == "admin1234":
+        # ตั้งรหัสผ่านที่ต้องการตรงนี้ (ตัวอย่าง: 1234)
+        if st.session_state["password"] == "1234":
             st.session_state["password_correct"] = True
             del st.session_state["password"]  # ลบรหัสออกจาก memory
         else:
